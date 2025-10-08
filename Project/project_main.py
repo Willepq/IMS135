@@ -43,7 +43,7 @@ print("x0_all shape:", x0_all.shape)
 print("x_all shape:", x_all.shape)
 print("steps shape:", steps.shape)
 
-lambda_l1 = 1e-9
+lambda_l1 = 1e-4
 optim_alg = 'Adam'
 
 mymodel = my_nn(x0_all, x_all, steps, lambda_l1, optim_alg, epochs=2000)
@@ -51,14 +51,24 @@ mymodel = my_nn(x0_all, x_all, steps, lambda_l1, optim_alg, epochs=2000)
 
 # %% 
 
+validate_plot(x0_all,x_all, 0, steps, 0)
+
+
+# load and define validation data for testing
+val_data = np.load('/Users/william_g/Documents/VScode/IMS135/Project/Data/validation trajectories/validation_trajectories_0.npz')
+x_valid      = val_data['X']
+
+
 test = np.array([np.pi/2.2, np.pi/6, 0.0,0.0]).reshape(1,4)
 test_tensor = torch.from_numpy(test).float().unsqueeze(0)
 y_test = mymodel(test_tensor).squeeze(0).detach().numpy()
 
+plt.figure()
 plt.plot(steps, y_test[:,0])
+plt.plot(steps,x_valid[:,0])
+plt.title('Model test, untrained data')
 
-
-
+#%%
 def validate_plot(x0, x, phi:int, steps, batch:int):
     x0_tensor = torch.from_numpy(x0[phi,:]).float().unsqueeze(0)
     y_pred = mymodel(x0_tensor).squeeze(0).detach().numpy()  # shape becomes (5000, 4)

@@ -14,12 +14,13 @@ class TrajectoryNet(nn.Module):
         self.fc2 = nn.Linear(64, 128)
         self.fc3 = nn.Linear(128, num_outputs * timesteps)
         self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
         self.num_outputs = num_outputs
         self.timesteps = timesteps
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
+        x = self.tanh(self.fc1(x))
+        x = self.tanh(self.fc2(x))
         x = self.fc3(x)
         # reshape into (batch_size, timesteps, num_outputs)
         return x.view(-1, self.timesteps, self.num_outputs)
