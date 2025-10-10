@@ -19,8 +19,8 @@ class TrajectoryNet(nn.Module):
         self.timesteps = timesteps
 
     def forward(self, x):
-        x = self.tanh(self.fc1(x))
-        x = self.tanh(self.fc2(x))
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
         x = self.fc3(x)
         # reshape into (batch_size, timesteps, num_outputs)
         return x.view(-1, self.timesteps, self.num_outputs)
@@ -29,7 +29,7 @@ class TrajectoryNet(nn.Module):
 # ----------------------------------
 # Generalized training function
 # ----------------------------------
-def my_nn(x0, x, steps, lambda_l1, optim_alg, epochs=500):
+def my_nn(x0, x, steps, lambda_l1, optim_alg, epochs):
     """
     Trains a neural network to predict state trajectories x(t)
     from initial conditions x0.

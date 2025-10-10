@@ -3,7 +3,7 @@
 
 import numpy as np
 import torch
-from model import my_nn  # import the training function
+from simple_model import my_nn  # import the training function
 import matplotlib.pyplot as plt
 import numpy as np
 import glob
@@ -49,6 +49,18 @@ optim_alg = 'Adam'
 mymodel = my_nn(x0_all, x_all, steps, lambda_l1, optim_alg, epochs=2000)
 
 
+#%%
+def validate_plot(x0, x, phi:int, steps, batch:int):
+    x0_tensor = torch.from_numpy(x0[phi,:]).float().unsqueeze(0)
+    y_pred = mymodel(x0_tensor).squeeze(0).detach().numpy()  # shape becomes (5000, 4)
+    
+    plt.figure()
+    plt.plot(steps,x[batch,:,phi], label='Real Data')
+    plt.plot(steps,y_pred[:,phi], '--r', label='Model Data')
+    plt.title(fr'Validation for Batch {batch}, $\theta_{+1}$')
+    plt.legend()
+
+
 # %% 
 
 validate_plot(x0_all,x_all, 0, steps, 0)
@@ -68,16 +80,6 @@ plt.plot(steps, y_test[:,0])
 plt.plot(steps,x_valid[:,0])
 plt.title('Model test, untrained data')
 
-#%%
-def validate_plot(x0, x, phi:int, steps, batch:int):
-    x0_tensor = torch.from_numpy(x0[phi,:]).float().unsqueeze(0)
-    y_pred = mymodel(x0_tensor).squeeze(0).detach().numpy()  # shape becomes (5000, 4)
-    
-    plt.figure()
-    plt.plot(steps,x[batch,:,phi], label='Real Data')
-    plt.plot(steps,y_pred[:,phi], '--r', label='Model Data')
-    plt.title(fr'Validation for Batch {batch}, $\theta_{+1}$')
-    plt.legend()
 
 
 # %%
