@@ -1,107 +1,120 @@
-import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import torch
+import matplotlib.pyplot as plt
 
 
-# ------------------------------
-# Neural net that predicts accelerations
-# ------------------------------
-class AccelNet(nn.Module):
-    def __init__(self, num_inputs=4, num_outputs=2):
-        super(AccelNet, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(num_inputs, 64),
-            nn.ReLU(),
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, num_outputs)
-        )
+# ----------------------------------
+# Neural network definition
+# ----------------------------------
+class TrajectoryNet(nn.Module):
+    def __init__(self, num_inputs, num_outputs, timesteps):
+        super(TrajectoryNet, self).__init__()
+        self.fc1 = nn.Linear(num_inputs, 64)
+        self.fc2 = nn.Linear(64, 128)
+        self.fc3 = nn.Linear(128, num_outputs * timesteps)
+        self.tanh = nn.Tanh()
+        self.num_outputs = num_outputs
+        self.timesteps = timesteps
 
     def forward(self, x):
-        return self.net(x)  # outputs accelerations [ddθ1, ddθ2]
+        x = self.tanh(self.fc1(x))
+        x = self.tanh(self.fc2(x))
+        x = self.fc3(x)
+        return x.view(-1, self.timesteps, self.num_outputs)  # (B, T, S)
 
 
-# ------------------------------
-# Training function for PINN
-# ------------------------------
-def train_pinn(x0_all, x_all, steps, lambda_phys, optim_alg='Adam', epochs=2000):
+# ----------------------------------
+# Generalized training function (now logs + plots loss)
+# ----------------------------------
+def my_nn(x0, x, steps, lambda_l1, optim_alg, epochs):
     """
-    Trains the PINN on multiple trajectories.
-
-    x0_all : (N, 4)
-    x_all  : (N, T, 4)  -> [θ1, θ2, dθ1, dθ2]
-    steps  : (T,)       -> time array
+    Trains a neural network to predict state trajectories x(t) from initial conditions x0.
+    Returns the trained model and the loss history.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    dt = float(steps[1] - steps[0])
-    timesteps = len(steps)
 
-    # Prepare training data
-    x0_tensor = torch.tensor(x0_all, dtype=torch.float32).to(device)
-    x_tensor = torch.tensor(x_all, dtype=torch.float32).to(device)
+    # Convert numpy arrays to PyTorch tensors
+    x0_tensor = torch.from_numpy(x0).float()   # (N, num_inputs)
+    x_tensor  = torch.from_numpy(x).float()    # (N, T, num_outputs)
 
-    pos_true = x_tensor[:, :, :2]
-    vel_true = x_tensor[:, :, 2:]
+    # Sizes
+    num_inputs  = x0_tensor.shape[1]
+    timesteps   = x_tensor.shape[1]            # safer than len(steps) if they ever differ
+    num_outputs = x_tensor.shape[2]
 
-    model = AccelNet().to(device)
-    mse = nn.MSELoss()
+    # Model, loss, optimizer
+    torch.manual_seed(0)
+    model = TrajectoryNet(num_inputs, num_outputs, timesteps)
+    criterion = nn.MSELoss()
 
     if optim_alg == 'LBFGS':
-        optimizer = optim.LBFGS(model.parameters(), lr=0.01)
+        optimizer = optim.LBFGS(model.parameters(), lr=0.01, max_iter=20, history_size=100)
     elif optim_alg == 'Adam':
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        optimizer = optim.Adam(model.parameters(), lr=1e-3)
     elif optim_alg == 'SGD':
-        optimizer = optim.SGD(model.parameters(), lr=0.01)
+        optimizer = optim.SGD(model.parameters(), lr=1e-2, momentum=0.9)
     else:
         raise ValueError(f"Unknown optimizer: {optim_alg}")
 
-    for epoch in range(epochs):
-        optimizer.zero_grad()
-        loss_total = 0.0
+    # L1 helper
+    def add_l1(loss):
+        if lambda_l1 > 0.0:
+            l1_reg = torch.tensor(0., device=loss.device)
+            for p in model.parameters():
+                l1_reg += p.abs().sum()
+            loss = loss + lambda_l1 * l1_reg
+        return loss
 
-        # Loop over all trajectories
-        for i in range(x0_tensor.shape[0]):
-            state = x0_tensor[i:i+1, :]  # shape (1, 4)
-            pos_pred = []
-            vel_pred = []
+    loss_history = []
 
-            for t in range(timesteps):
-                # NEW — safe for autograd
-                acc = model(state)
-                new_vel = state[:, 2:] + acc * dt
-                new_pos = state[:, :2] + new_vel * dt
-                state = torch.cat([new_pos, new_vel], dim=1)
-                pos_pred.append(state[:, :2])
-                vel_pred.append(state[:, 2:])
+    # --- Training loop ---
+    model.train()
+    if optim_alg == 'LBFGS':
+        # LBFGS needs a closure; we still run for 'epochs' outer loops
+        for epoch in range(epochs):
+            def closure():
+                optimizer.zero_grad()
+                outputs = model(x0_tensor)
+                loss = criterion(outputs, x_tensor)
+                loss = add_l1(loss)
+                loss.backward()
+                return loss
 
-            pos_pred = torch.cat(pos_pred, dim=0).view(timesteps, -1)
-            vel_pred = torch.cat(vel_pred, dim=0).view(timesteps, -1)
+            optimizer.step(closure)
 
-            loss_data = mse(pos_pred, pos_true[i]) + mse(vel_pred, vel_true[i])
-            phys_reg = torch.mean(model(state) ** 2)
-            loss_total += loss_data + lambda_phys * phys_reg
+            # Log current loss value
+            with torch.no_grad():
+                outputs = model(x0_tensor)
+                loss_val = criterion(outputs, x_tensor)
+                loss_val = add_l1(loss_val).item()
+            loss_history.append(loss_val)
 
-        loss_total.backward()
-        optimizer.step()
+            if (epoch + 1) % 100 == 0:
+                print(f"Epoch [{epoch+1}/{epochs}]  Loss: {loss_val:.6e}")
+    else:
+        # Standard loop for Adam/SGD
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            outputs = model(x0_tensor)
+            loss = criterion(outputs, x_tensor)
+            loss = add_l1(loss)
+            loss.backward()
+            optimizer.step()
 
-        if (epoch + 1) % 1 == 0:
-            print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss_total.item():.6f}")
+            loss_history.append(loss.item())
 
-    return model
+            if (epoch + 1) % 100 == 0:
+                print(f"Epoch [{epoch+1}/{epochs}]  Loss: {loss_history[-1]:.6e}")
 
+    # --- Plot loss after training ---
+    plt.figure()
+    plt.plot(np.arange(1, epochs + 1), loss_history)
+    plt.xlabel('Epoch')
+    plt.ylabel('Training Loss (MSE + L1)')
+    plt.title(f'Training Loss – {optim_alg}')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
-# ------------------------------
-# Simulation using trained model
-# ------------------------------
-def simulate(model, x0, timesteps, dt):
-    model.eval()
-    x0 = torch.tensor(x0, dtype=torch.float32)
-    state = x0.clone()
-    traj = [state.detach().cpu().numpy()]
-    for _ in range(timesteps):
-        acc = model(state)
-        state[:, 2:] += acc * dt
-        state[:, :2] += state[:, 2:] * dt
-        traj.append(state.detach().cpu().numpy())
-    return np.stack(traj)
+    return model, loss_history
